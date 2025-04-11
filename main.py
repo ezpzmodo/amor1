@@ -1,196 +1,64 @@
-import os
 import asyncio
-import time
 import random
-from telethon import TelegramClient, events, functions
-from telethon.errors import FloodWaitError, RPCError
+from telethon import TelegramClient
 
-##################################
-# [1] 텔레그램 기본 설정
-##################################
-API_ID = int(os.getenv("API_ID", "20174375"))
-API_HASH = os.getenv("API_HASH", "5852c67e3bcf9b90cd3d6d8ba13606e3")
-PHONE_NUMBER = os.getenv("PHONE_NUMBER", "+818029346039")
+# ---------- 텔레그램 API 설정 ----------
+API_ID = 27619640               # 실제 API_ID로 변경
+API_HASH = "d6a2472bde05ce8bd785047c6f80217f"      # 실제 API_HASH로 변경
+PHONE_NUMBER = "+818083586377"        # 실제 전화번호(국제 형식)로 변경
 
-SESSION_NAME = "my_telethon_session"
-client = TelegramClient(
-    SESSION_NAME,
-    API_ID,
-    API_HASH,
-    timeout=60,
-    auto_reconnect=True
-)
+# 홍보 계정 : 이 계정에 미리 보내둔 메시지를 가져옵니다.
+# 여기에는 홍보 계정의 username, 채널 id 또는 전화번호 등을 사용할 수 있습니다.
+SOURCE_CHAT = "@cuz_z"             
 
-##################################
-# [2] 광고(홍보) 계정 & 메시지 설정
-##################################
-MARKETING_USER = "@cuz_z"  # 홍보 계정 유저네임(or ID)
-MSG_LIMIT = 3  # 최근 메시지 3개 (a, b, c) 로 라운드 로빈
+# 각 그룹 전송 후 대기 시간 (초)
+MIN_DELAY = 5
+MAX_DELAY = 10
 
-##################################
-# [3] 그룹/전송 파라미터 (고정 시간)
-##################################
-MAX_GROUPS = 20       # 20개 그룹
-BATCH_SIZE = 5        # 배치당 5개 그룹
+# 사용자 계정으로 사용하므로 세션 이름은 "user_session" 등으로 설정합니다.
+client = TelegramClient("user_session", API_ID, API_HASH)
 
-DELAY_GROUP = 45       # 그룹 간 45초
-DELAY_BATCH = 600      # 배치 간 10분(600초)
-DELAY_CYCLE = 6120     # 사이클 간 102분(6120초)
+async def forward_message_to_all_groups():
+    # 홍보 계정에서 최근 최대 6개의 메시지 불러오기
+    msgs = await client.get_messages(SOURCE_CHAT, limit=6)
+    if not msgs:
+        print("홍보 계정에서 메시지를 찾을 수 없습니다.")
+        return
 
-##################################
-# [4] 연결/세션 확인 함수
-##################################
-async def ensure_connected():
-    if not client.is_connected():
-        print("[INFO] Telethon is disconnected. Reconnecting...")
-        await client.connect()
+    print("홍보 계정에서 가져온 메시지:")
+    for idx, msg in enumerate(msgs):
+        print(f"{idx+1}번째 메시지 ID: {msg.id}")
 
-    if not await client.is_user_authorized():
-        print("[WARN] 세션 없음/만료 → OTP 로그인 시도")
-        await client.start(phone=PHONE_NUMBER)
-        print("[INFO] 로그인/재인증 완료")
-
-##################################
-# [4-1] keep_alive 함수 추가!
-##################################
-async def keep_alive():
-    """
-    10분마다 호출해서 Telethon 연결 상태를 확인하는 간단한 API 요청
-    """
-    try:
-        await ensure_connected()
-        await client(functions.help.GetNearestDcRequest())
-        print("[INFO] keep_alive ping success")
-    except Exception as e:
-        print(f"[ERROR] keep_alive ping fail: {e}")
-
-##################################
-# [5] "복사+붙여넣기" 방식 전송 함수
-##################################
-async def copy_paste_message(dest, msg):
-    try:
-        if msg.media:
-            caption_text = msg.message or ""
-            await client.send_file(dest, msg.media, caption=caption_text)
-        else:
-            await client.send_message(dest, msg.message)
-    except FloodWaitError as fw:
-        print(f"[ERROR] FloodWait {fw.seconds}초. 대기 후 재시도.")
-        await asyncio.sleep(fw.seconds + 5)
-        if msg.media:
-            caption_text = msg.message or ""
-            await client.send_file(dest, msg.media, caption=caption_text)
-        else:
-            await client.send_message(dest, msg.message)
-
-##################################
-# [6] 메시지/그룹 로드
-##################################
-async def get_recent_marketing_msgs():
-    await ensure_connected()
-    msgs = await client.get_messages(MARKETING_USER, limit=MSG_LIMIT)
-    return msgs
-
-async def load_groups():
-    await ensure_connected()
+    # 가입한 모든 대화(그룹 및 채널) 목록 불러오기
     dialogs = await client.get_dialogs()
-    group_list = [d.id for d in dialogs if d.is_group or d.is_channel]
-    return group_list[:MAX_GROUPS]
+    groups = [d for d in dialogs if d.is_group or d.is_channel]
+    print(f"총 {len(groups)}개의 그룹/채널에 전달을 시작합니다.")
 
-##################################
-# [7] 1사이클(20개 그룹) 전송 로직
-##################################
-async def run_one_cycle(cycle_number: int):
-    marketing_msgs = await get_recent_marketing_msgs()
-    if not marketing_msgs:
-        print("[WARN] 홍보 메시지를 불러오지 못함. 5분 대기 후 재시도.")
-        await asyncio.sleep(300)
-        return
-
-    print(f"[INFO] 사이클 {cycle_number}/10 시작. 메시지 {len(marketing_msgs)}개")
-    msg_idx = 0
-
-    group_list = await load_groups()
-    if not group_list:
-        print("[WARN] 그룹 0개. 5분 대기 후 재시도.")
-        await asyncio.sleep(300)
-        return
-
-    if len(group_list) < 20:
-        print(f"[INFO] 실제 대상 그룹: {len(group_list)}개 < 20개")
-    random.shuffle(group_list)
-
-    batch_count = (len(group_list) + BATCH_SIZE - 1) // BATCH_SIZE
-    for b_idx in range(batch_count):
-        start_idx = b_idx * BATCH_SIZE
-        end_idx = min(start_idx + BATCH_SIZE, len(group_list))
-        batch = group_list[start_idx:end_idx]
-        if not batch:
-            break
-
-        print(f"[INFO] 배치 {b_idx+1}/{batch_count}, 그룹 {start_idx}~{end_idx-1}")
-
-        for g_idx, grp_id in enumerate(batch):
-            current_msg = marketing_msgs[msg_idx]
-            try:
-                await copy_paste_message(grp_id, current_msg)
-                print(f"[INFO] 복사 전송 성공 → group={grp_id}, msg_idx={msg_idx}")
-            except RPCError as e:
-                print(f"[ERROR] RPCError(chat_id={grp_id}): {e}")
-            except Exception as e:
-                print(f"[ERROR] 전송 실패(chat_id={grp_id}): {e}")
-
-            msg_idx = (msg_idx + 1) % len(marketing_msgs)
-
-            if g_idx < len(batch)-1:
-                await asyncio.sleep(DELAY_GROUP)
-
-        if b_idx < batch_count - 1:
-            print(f"[INFO] 배치 {b_idx+1} 완료 → {DELAY_BATCH//60}분 대기.")
-            await asyncio.sleep(DELAY_BATCH)
-
-    print(f"[INFO] 사이클 {cycle_number}/10 끝. {DELAY_CYCLE//60}분 대기 후 다음 사이클.")
-    await asyncio.sleep(DELAY_CYCLE)
-
-##################################
-# [8] 메인 루프
-##################################
-async def run_daily_cycles():
-    cycle_num = 1
+    # 순차 전달을 위한 인덱스 초기화 (순서대로 메시지 사용)
+    msg_index = 0
+    num_msgs = len(msgs)
+    
+    # 영구 무한 반복: 그룹 리스트 전체를 순회하며 메시지를 전달
     while True:
-        if cycle_num > 10:
-            cycle_num = 1
-            print("[INFO] 하루(10사이클) 완료 → 다음 날 사이클 재시작.")
-
-        await run_one_cycle(cycle_num)
-        cycle_num += 1
+        for group in groups:
+            try:
+                # 순차적으로 메시지를 선택합니다. 예) 1번째 메시지, 2번째 메시지, …, 다시 1번째 메시지...
+                src_msg = msgs[msg_index % num_msgs]
+                await client.forward_messages(group.id, src_msg.id, from_peer=SOURCE_CHAT)
+                print(f"그룹 '{group.name}' ({group.id}) 에 {msg_index % num_msgs + 1}번째 메시지 전달 성공")
+                msg_index += 1
+            except Exception as e:
+                print(f"그룹 '{group.name}' ({group.id}) 에 전달 실패: {e}")
+            # 각 그룹 전송 후 5~10초 랜덤 딜레이
+            delay = random.randint(MIN_DELAY, MAX_DELAY)
+            await asyncio.sleep(delay)
 
 async def main():
-    await client.connect()
-    print("[INFO] client.connect() 완료")
-
-    if not (await client.is_user_authorized()):
-        print("[INFO] 세션 없음/만료 → OTP 로그인 시도")
-        await client.start(phone=PHONE_NUMBER)
-        print("[INFO] 로그인/재인증 성공")
-    else:
-        print("[INFO] 이미 인증된 세션 (OTP 불필요)")
-
-    @client.on(events.NewMessage(pattern="/ping"))
-    async def ping_handler(event):
-        await event.respond("pong!")
-
-    print("[INFO] 텔레그램 로그인(세션) 준비 완료")
-
-    async def keep_alive_loop():
-        while True:
-            await keep_alive()
-            await asyncio.sleep(600)  # 10분
-
-    await asyncio.gather(
-        run_daily_cycles(),
-        keep_alive_loop()
-    )
+    print("텔레그램에 로그인 중...")
+    # 일반 사용자 계정으로 로그인 (첫 실행 시 OTP 인증 필요)
+    await client.start(phone=PHONE_NUMBER)
+    print("로그인 완료. 영구적으로 메시지를 전달합니다.")
+    await forward_message_to_all_groups()
 
 if __name__ == "__main__":
     asyncio.run(main())
