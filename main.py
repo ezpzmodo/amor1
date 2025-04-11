@@ -12,8 +12,8 @@ PHONE_NUMBER = "+818083586377"        # 실제 전화번호(국제 형식)로 �
 SOURCE_CHAT = "@cuz_z"             
 
 # 각 그룹 전송 후 대기 시간 (초)
-MIN_DELAY = 5
-MAX_DELAY = 10
+MIN_DELAY = 20
+MAX_DELAY = 30
 
 # 사용자 계정으로 사용하므로 세션 이름은 "user_session" 등으로 설정합니다.
 client = TelegramClient("user_session", API_ID, API_HASH)
