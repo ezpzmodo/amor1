@@ -10,7 +10,7 @@ PHONE_NUMBER = "+819051251446"          # 제공하신 전화번호 (국제 형�
 # 홍보 계정 (공개 username 사용: 예시 '@cuz_z')
 SOURCE_CHAT = "@cuz_z"               
 
-# 각 그룹 전송 후 기본 대기 시간 (초)
+# 각 그룹 전송 후 짧은 딜레이 (초)
 MIN_DELAY = 5
 MAX_DELAY = 10
 
@@ -32,19 +32,20 @@ async def forward_message_to_all_groups():
     for idx, msg in enumerate(msgs):
         print(f"  {idx+1}번째 메시지 ID: {msg.id}")
 
-    # 가입된 모든 대화 목록 중 채널을 제외하고 그룹만 가져옵니다.
+    # 가입된 대화 목록에서 채널을 제외한 그룹만 가져옵니다.
     dialogs = await client.get_dialogs()
-    groups = [d for d in dialogs if d.is_group]  # 채널 제외
-    print(f"총 {len(groups)}개의 그룹에 전달을 시작합니다.")
+    groups = [d for d in dialogs if d.is_group]
+    total_groups = len(groups)
+    print(f"총 {total_groups}개의 그룹에 전달을 시작합니다.")
 
     msg_index = 0
     num_msgs = len(msgs)
-    group_counter = 0  # 배치 내 전송한 그룹 수 기록
+    group_counter = 0  # 현재 사이클에서 전송한 그룹 수
 
-    # 무한 반복: 전체 그룹 순회 후 다시 반복
     while True:
+        # 모든 그룹 순회: 각 그룹에 대해 메시지 전송
         for group in groups:
-            # 연결 상태 체크 및 재연결 (필요 시)
+            # 연결 상태 확인 (연결 끊김 시 재연결)
             if not client.is_connected():
                 print("연결이 끊어졌습니다. 재연결 시도...")
                 try:
@@ -56,21 +57,20 @@ async def forward_message_to_all_groups():
                     continue
 
             try:
-                # 저장된 홍보 메시지 리스트에서 순차적으로 선택 (순환)
+                # 순환 방식으로 메시지 선택
                 src_msg = msgs[msg_index % num_msgs]
                 await client.forward_messages(group.id, src_msg.id, from_peer=SOURCE_CHAT)
                 print(f"그룹 '{group.name}' ({group.id}) 에 {msg_index % num_msgs + 1}번째 메시지 전달 성공")
                 msg_index += 1
                 group_counter += 1
 
-                # 각 그룹 전송 후 짧은 딜레이 적용
-                short_delay = random.randint(MIN_DELAY, MAX_DELAY)
-                await asyncio.sleep(short_delay)
+                # 각 그룹 전송 후 5~10초 짧은 딜레이
+                await asyncio.sleep(random.randint(MIN_DELAY, MAX_DELAY))
 
-                # 일정 수의 그룹(예: 4~8개) 전송 후 긴 휴식 추가
-                if group_counter % random.randint(4, 8) == 0:
+                # 매 4개 그룹마다 긴 휴식: 20~60초 딜레이
+                if group_counter % 4 == 0:
                     longer_delay = random.randint(20, 60)
-                    print(f"배치 전송 완료. {longer_delay}초 동안 잠시 휴식합니다.")
+                    print(f"그룹 {group_counter}번째 전송 완료. {longer_delay}초 동안 긴 휴식합니다.")
                     await asyncio.sleep(longer_delay)
 
             except errors.FloodWaitError as fwe:
@@ -92,21 +92,21 @@ async def forward_message_to_all_groups():
                 await asyncio.sleep(5)
                 continue
 
-        # 전체 그룹 순회 완료 후 5~10분 휴식 및 홍보 메시지 업데이트
-        print("전체 그룹 순회 완료. 5~10분 동안 휴식 후 홍보 메시지를 다시 불러옵니다.")
+        # 전체 그룹 순회가 끝나면 한 사이클로 간주하고, 5~10분(300~600초) 휴식 후 메시지 업데이트
+        print("전체 그룹 순회 완료. 5~10분 동안 휴식 후 홍보 메시지를 업데이트합니다.")
         await asyncio.sleep(random.randint(300, 600))
         try:
             new_msgs = await client.get_messages(SOURCE_CHAT, limit=6)
             if new_msgs:
                 msgs = new_msgs
                 num_msgs = len(msgs)
-                msg_index = 0  # 필요에 따라 순서를 초기화
+                msg_index = 0  # 업데이트 후 순서를 초기화 (원하는 경우)
                 print("홍보 메시지를 업데이트했습니다.")
             else:
-                print("새 홍보 메시지가 없으므로, 기존 메시지를 계속 사용합니다.")
+                print("새로운 홍보 메시지가 없으므로 기존 메시지를 계속 사용합니다.")
         except Exception as e:
             print("홍보 메시지 업데이트 실패:", e)
-            # 업데이트 실패 시 기존 메시지를 계속 사용합니다.
+            # 업데이트 실패 시 기존 메시지를 계속 사용
 
 async def main():
     print("텔레그램에 로그인 중...")
