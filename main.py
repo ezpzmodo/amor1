@@ -4,21 +4,22 @@ import time
 from telethon import TelegramClient, errors
 
 # ---------- 텔레그램 API 설정 ----------
-API_ID = 29392000  # 업데이트된 API ID
-API_HASH = "63fcfc6f36c1ac9f04aafd058b3b0c8c"  # 업데이트된 API HASH
-PHONE_NUMBER = "+818089428133"  # 업데이트된 전화번호 (국제 형식)
+API_ID = 25354866  # 업데이트된 API ID
+API_HASH = "5651defc5904cee453e36e3bbc5b158d"  # 업데이트된 API HASH
+PHONE_NUMBER = "+818092009533"  # 업데이트된 전화번호 (국제 형식)
 
 # 홍보 계정: 공개 username (예시)
 SOURCE_CHAT = "@cuz_z"  # 필요에 따라 변경 가능
 
-# 각 그룹 전송 후 짧은 딜레이 (초)
+# 각 그룹 전송 후 짧은 딜H레이 (초)
 MIN_DELAY = 5
 MAX_DELAY = 10
 
-client = TelegramClient("user_session", API_ID, API_HASH)
+# Telethon 클라이언트 생성 (세션 파일 이름: promo_session)
+client = TelegramClient("promo_session", API_ID, API_HASH)
 
 async def forward_message_to_all_groups():
-    # 시작 시 홍보 계정에서 최대 6개의 메시지를 불러옴 (실제 등록된 메시지가 3개라면 3개만 로딩됨)
+    # 시작 시 홍보 계정에서 최대 6개의 메시지를 불러옴.
     try:
         msgs = await client.get_messages(SOURCE_CHAT, limit=6)
     except Exception as e:
@@ -33,7 +34,7 @@ async def forward_message_to_all_groups():
     for idx, msg in enumerate(msgs):
         print(f"  {idx+1}번째 메시지 ID: {msg.id}")
 
-    # 가입된 대화 목록 중 채널을 제외한 그룹만 가져오기
+    # 가입된 대화 목록에서 채널은 제외한 그룹만 가져오기
     dialogs = await client.get_dialogs()
     groups = [d for d in dialogs if d.is_group]
     total_groups = len(groups)
@@ -65,10 +66,10 @@ async def forward_message_to_all_groups():
                 msg_index += 1
                 group_counter += 1
 
-                # 각 그룹 전송 후 5~10초 짧은 딜레이
+                # 각 그룹 전송 후 5~10초 짧은 딜레이 적용
                 await asyncio.sleep(random.randint(MIN_DELAY, MAX_DELAY))
 
-                # 매 4개 그룹마다 긴 휴식(20~60초)
+                # 매 4개 그룹마다 긴 휴식 (20~60초)
                 if group_counter % 4 == 0:
                     longer_delay = random.randint(20, 60)
                     print(f"{group_counter}개 그룹 전송 완료. {longer_delay}초 동안 긴 휴식합니다.")
@@ -113,8 +114,7 @@ async def forward_message_to_all_groups():
             if new_msgs:
                 msgs = new_msgs
                 num_msgs = len(msgs)
-                # msg_index는 유지하며, 현재 크기에 맞게 modulo 적용
-                msg_index = msg_index % num_msgs
+                msg_index = msg_index % num_msgs  # msg_index를 새 메시지 수에 맞게 조정
                 print("홍보 메시지를 업데이트했습니다. 이어서 전송합니다.")
             else:
                 print("새로운 홍보 메시지가 없으므로, 기존 메시지를 계속 사용합니다.")
@@ -124,7 +124,7 @@ async def forward_message_to_all_groups():
 
 async def main():
     print("텔레그램에 로그인 중...")
-    await client.start(phone=PHONE_NUMBER)
+    await client.start(PHONE_NUMBER)
     print("로그인 완료. 자연스러운 전송 패턴으로 메시지를 전송합니다.")
     await forward_message_to_all_groups()
 
