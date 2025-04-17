@@ -13,7 +13,7 @@ from telethon.tl.types import ChatReactionsAll, ChatReactionsSome
 API_ID      = 22134537
 API_HASH    = "6651ed74d2bbea1d86d7dc6d2cdf087d"
 PHONE       = "+818095235397"
-SOURCE_CHAT = "@cuz_z"            # Saved Messages 로 사용할 채팅
+SOURCE_CHAT = "@cuz_z"            # Saved Messages
 SESSION     = "promo_session"     # .session 파일명
 
 # ─── 딜레이 설정 ───────────────────────────────────
@@ -32,35 +32,36 @@ JST = ZoneInfo("Asia/Tokyo")
 # Telethon 클라이언트
 client = TelegramClient(SESSION, API_ID, API_HASH)
 
-# 그룹별 메시지 순환 커서
+# 그룹별 메시지 순환 커서 (초기엔 None → 랜덤으로 시작)
 group_msg_cursor = {}
 
 def now():
     return datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
 
 async def forward_cycle():
-    # 모드 판단 & 로그
+    # 1) 모드 판단 & 로그
     hour = datetime.now(JST).hour
     mode = "새벽(02–07시)" if 2 <= hour < 7 else "낮(07–02시)"
     print(f"{now()} [MODE] {mode} 사이클 시작")
 
-    # 저장 메시지 7개 로드
+    # 2) 저장 메시지 7개 로드
     msgs = await client.get_messages(SOURCE_CHAT, limit=7)
     if not msgs:
         print(f"{now()} [WARN] 저장된 메시지 없음 → 사이클 스킵\n")
         return
     num_msgs = len(msgs)
 
-    # 채널 제외한 그룹 목록 & 랜덤 셔플
+    # 3) 채널 제외한 그룹 목록 & 랜덤 셔플
     dialogs = await client.get_dialogs()
     groups = [d for d in dialogs if d.is_group]
     random.shuffle(groups)
     print(f"{now()} ▶ 메시지 {num_msgs}개 → 그룹 {len(groups)}개 대상")
 
+    # 4) 그룹별 처리
     for d in groups:
         gid = d.id
 
-        # (1) 슬로우모드 조회
+        # 4-1) 슬로우모드 조회
         slow_secs = 0
         try:
             ent = d.entity
@@ -72,7 +73,7 @@ async def forward_cycle():
         except:
             slow_secs = 0
 
-        # (2) 슬로우모드 스킵
+        # 4-2) 슬로우모드 스킵
         if slow_secs > 0:
             last = await client.get_messages(gid, limit=1)
             if last:
@@ -81,13 +82,13 @@ async def forward_cycle():
                     print(f"{now()} [SKIP] {d.name or gid}: 슬로우모드 {slow_secs}s, 마지막 메시지 {delta:.0f}s 전")
                     continue
 
-        # (3) 읽음 처리
+        # 4-3) 읽음 처리
         try:
             await client.send_read_acknowledge(gid)
         except:
             pass
 
-        # (4) 가끔 리액션
+        # 4-4) 가끔 리액션
         if random.random() < REACT_PROB:
             try:
                 if getattr(ent, "megagroup", False):
@@ -112,12 +113,15 @@ async def forward_cycle():
             except Exception as e:
                 print(f"{now()} [REACT ERR] {d.name or gid}: {type(e).__name__} {e}")
 
-        # (5) 그룹별 순환 메시지 선택
-        idx = group_msg_cursor.get(gid, 0) % num_msgs
+        # 4-5) 그룹별 순환 메시지 선택 (초기엔 랜덤)
+        if gid not in group_msg_cursor:
+            group_msg_cursor[gid] = random.randint(0, num_msgs - 1)
+        idx = group_msg_cursor[gid]
         msg = msgs[idx]
-        group_msg_cursor[gid] = idx + 1  # 다음 사이클에는 다음 메시지
+        # 다음 순서는 (idx+1) % num_msgs
+        group_msg_cursor[gid] = (idx + 1) % num_msgs
 
-        # (6) 포워드
+        # 4-6) 포워드
         try:
             await client.forward_messages(gid, [msg.id], from_peer=SOURCE_CHAT)
             print(f"{now()} [OK] {d.name or gid} ← msg {msg.id}")
@@ -130,7 +134,7 @@ async def forward_cycle():
         except Exception as e:
             print(f"{now()} [ERR] {d.name or gid}: {type(e).__name__} {e}")
 
-        # (7) 그룹당 딜레이
+        # 4-7) 그룹당 딜레이
         delay = random.uniform(MIN_DELAY, MAX_DELAY)
         print(f"{now()}    -- 그룹 딜레이: {delay:.1f}s --")
         await asyncio.sleep(delay)
@@ -145,7 +149,7 @@ async def main():
     while True:
         await forward_cycle()
 
-        # 사이클 휴식 모드 재판단
+        # 5) 사이클 휴식 모드 재판단
         hour = datetime.now(JST).hour
         if 2 <= hour < 7:
             dmin, dmax = NIGHT_MIN, NIGHT_MAX
