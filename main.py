@@ -1,132 +1,141 @@
 import asyncio
 import random
-import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from telethon import TelegramClient, errors
+from telethon.tl.functions.messages import GetFullChatRequest
+from telethon.tl.functions.channels import GetFullChannelRequest
 
-# ---------- 텔레그램 API 설정 ----------
-API_ID = 25354866  # 업데이트된 API ID
-API_HASH = "5651defc5904cee453e36e3bbc5b158d"  # 업데이트된 API HASH
-PHONE_NUMBER = "+818092009533"  # 업데이트된 전화번호 (국제 형식)
+# ─── 설정 ─────────────────────────────────────────
+API_ID      = 22134537
+API_HASH    = "6651ed74d2bbea1d86d7dc6d2cdf087d"
+PHONE       = "+818095235397"
+SOURCE_CHAT = "@cuz_z"            # Saved Messages
+SESSION     = "promo_session"     # .session 파일명
 
-# 홍보 계정: 공개 username (예시)
-SOURCE_CHAT = "@cuz_z"  # 필요에 따라 변경 가능
+# ─── 딜레이 설정 ───────────────────────────────────
+MIN_DELAY = 5      # 그룹당 최소 5초
+MAX_DELAY = 10     # 그룹당 최대 10초
 
-# 각 그룹 전송 후 짧은 딜H레이 (초)
-MIN_DELAY = 5
-MAX_DELAY = 10
+DAY_MIN    = 20    # 낮(07–02시) 사이클 최소 20분
+DAY_MAX    = 60    # 낮(07–02시) 사이클 최대 60분
+NIGHT_MIN  = 60    # 새벽(02–07시) 사이클 최소 60분
+NIGHT_MAX  = 120   # 새벽(02–07시) 사이클 최대 120분
 
-# Telethon 클라이언트 생성 (세션 파일 이름: promo_session)
-client = TelegramClient("promo_session", API_ID, API_HASH)
+REACT_PROB = 0.1
+REACTIONS  = ['👍','❤️','😂','🤔']
 
-async def forward_message_to_all_groups():
-    # 시작 시 홍보 계정에서 최대 6개의 메시지를 불러옴.
-    try:
-        msgs = await client.get_messages(SOURCE_CHAT, limit=6)
-    except Exception as e:
-        print("홍보 계정 메시지 불러오기 실패:", e)
-        return
+JST = ZoneInfo("Asia/Tokyo")
 
+# ─── Telethon 클라이언트 & 메시지 커서 ─────────────────
+client = TelegramClient(SESSION, API_ID, API_HASH)
+msg_cursor = 0
+
+def now():
+    return datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S")
+
+async def forward_cycle():
+    global msg_cursor
+
+    # 1) 모드 로그
+    hour = datetime.now(JST).hour
+    mode = "새벽(02–07시)" if 2 <= hour < 7 else "낮(07–02시)"
+    print(f"{now()} [MODE] {mode} 모드 시작")
+
+    # 2) 저장 메시지 로드
+    msgs = await client.get_messages(SOURCE_CHAT, limit=6)
     if not msgs:
-        print("홍보 계정에서 메시지를 찾을 수 없습니다.")
+        print(f"{now()} [WARN] 저장된 메시지 없음 → 사이클 스킵\n")
         return
 
-    print("홍보 계정에서 가져온 메시지:")
-    for idx, msg in enumerate(msgs):
-        print(f"  {idx+1}번째 메시지 ID: {msg.id}")
-
-    # 가입된 대화 목록에서 채널은 제외한 그룹만 가져오기
+    # 3) 그룹 필터링 (채널 제외)
     dialogs = await client.get_dialogs()
     groups = [d for d in dialogs if d.is_group]
-    total_groups = len(groups)
-    print(f"총 {total_groups}개의 그룹에 전달을 시작합니다.")
+    random.shuffle(groups)
+    print(f"{now()} ▶ 사이클 시작: 메시지 {len(msgs)}개 → 그룹 {len(groups)}개")
 
-    msg_index = 0
-    num_msgs = len(msgs)
-    group_counter = 0  # 현재 사이클에서 전송한 그룹 수
-    cycle_counter = 0  # 전체 순회 사이클 수
+    # 4) 그룹별 처리
+    for d in groups:
+        gid = d.id
 
-    while True:
-        # 모든 그룹 순회: 각 그룹에 대해 메시지 전송
-        for group in groups:
-            if not client.is_connected():
-                print("연결이 끊어졌습니다. 재연결 시도...")
-                try:
-                    await client.connect()
-                    print("재연결 성공!")
-                except Exception as e:
-                    print("재연결 실패:", e)
-                    await asyncio.sleep(10)
-                    continue
-
-            try:
-                # 저장된 홍보 메시지 리스트에서 순환 방식으로 선택
-                src_msg = msgs[msg_index % num_msgs]
-                await client.forward_messages(group.id, src_msg.id, from_peer=SOURCE_CHAT)
-                print(f"그룹 '{group.name}' ({group.id}) 에 {msg_index % num_msgs + 1}번째 메시지 전송 성공")
-                msg_index += 1
-                group_counter += 1
-
-                # 각 그룹 전송 후 5~10초 짧은 딜레이 적용
-                await asyncio.sleep(random.randint(MIN_DELAY, MAX_DELAY))
-
-                # 매 4개 그룹마다 긴 휴식 (20~60초)
-                if group_counter % 4 == 0:
-                    longer_delay = random.randint(20, 60)
-                    print(f"{group_counter}개 그룹 전송 완료. {longer_delay}초 동안 긴 휴식합니다.")
-                    await asyncio.sleep(longer_delay)
-
-            except errors.FloodWaitError as fwe:
-                print(f"FloodWaitError 발생: {fwe.seconds}초 대기합니다.")
-                await asyncio.sleep(fwe.seconds + 1)
-            except errors.TypeNotFoundError as tne:
-                print("TypeNotFoundError 발생:", tne)
-                print("세션 또는 API 불일치로 판단됩니다. 10초 후 재연결 시도합니다.")
-                await asyncio.sleep(10)
-                try:
-                    await client.disconnect()
-                    await client.connect()
-                except Exception as e:
-                    print("재연결 실패:", e)
-                    await asyncio.sleep(10)
-                continue
-            except Exception as e:
-                print(f"그룹 '{group.name}' ({group.id}) 에 전송 실패: {e}")
-                await asyncio.sleep(5)
-                continue
-
-        # 전체 그룹 순회 완료 → 한 사이클 종료
-        cycle_counter += 1
-        print(f"전체 그룹 순회 사이클 {cycle_counter} 완료.")
-        # 한 사이클마다 5~10분(300~600초) 휴식
-        normal_break = random.randint(300, 600)
-        print(f"한 사이클 후 {normal_break/60:.1f}분 동안 휴식합니다.")
-        await asyncio.sleep(normal_break)
-
-        # 4 사이클마다 추가 장기 휴식 (30~60분)
-        if cycle_counter % 4 == 0:
-            extended_break = random.randint(1800, 3600)
-            print(f"사이클 {cycle_counter} 도달. 추가 장기 휴식: {extended_break/60:.1f}분")
-            await asyncio.sleep(extended_break)
-
-        # 홍보 메시지 업데이트: 이전 사이클에서 이어서 전송하도록 msg_index 유지
+        # --- 슬로우모드 체크 ---
+        slow_secs = 0
         try:
-            new_msgs = await client.get_messages(SOURCE_CHAT, limit=6)
-            if new_msgs:
-                msgs = new_msgs
-                num_msgs = len(msgs)
-                msg_index = msg_index % num_msgs  # msg_index를 새 메시지 수에 맞게 조정
-                print("홍보 메시지를 업데이트했습니다. 이어서 전송합니다.")
+            ent = d.entity
+            if getattr(ent, "megagroup", False):
+                full = await client(GetFullChannelRequest(channel=gid))
             else:
-                print("새로운 홍보 메시지가 없으므로, 기존 메시지를 계속 사용합니다.")
+                full = await client(GetFullChatRequest(chat_id=gid))
+            slow_secs = full.slow_mode_seconds
+        except Exception:
+            slow_secs = 0
+
+        if slow_secs > 0:
+            last = await client.get_messages(gid, limit=1)
+            if last:
+                delta = (datetime.now(JST) - last[0].date).total_seconds()
+                if delta < slow_secs:
+                    print(f"{now()} [SKIP] {d.name or gid}: 슬로우모드 {slow_secs}s 제한, 마지막 메시지 {delta:.0f}s 전 → 건너뜁니다.")
+                    continue
+        # --- 슬로우모드 체크 끝 ---
+
+        # a) 읽음 처리
+        try:
+            await client.send_read_acknowledge(gid)
+        except Exception:
+            pass
+
+        # b) 가끔 리액션
+        if random.random() < REACT_PROB:
+            last = await client.get_messages(gid, limit=1)
+            if last:
+                try:
+                    await client.send_reaction(gid, last[0].id, random.choice(REACTIONS))
+                    print(f"{now()} [REACT] {d.name or gid} msg {last[0].id}")
+                    await asyncio.sleep(random.uniform(1,2))
+                except Exception as e:
+                    print(f"{now()} [REACT ERR] {d.name or gid}: {e}")
+
+        # c) 포워드
+        msg = msgs[msg_cursor % len(msgs)]
+        msg_cursor += 1
+        try:
+            await client.forward_messages(gid, [msg.id], from_peer=SOURCE_CHAT)
+            print(f"{now()} [OK] {d.name or gid} ← msg {msg.id}")
+        except errors.FloodWaitError as f:
+            print(f"{now()} [FLOOD] {d.name or gid} 대기 {f.seconds}s")
+            await asyncio.sleep(f.seconds + 1)
         except Exception as e:
-            print("홍보 메시지 업데이트 실패:", e)
-            # 업데이트 실패 시 기존 메시지 계속 사용
+            print(f"{now()} [ERR] {d.name or gid}: {e}")
+
+        # d) 그룹당 딜레이 (5~10초)
+        delay = random.uniform(MIN_DELAY, MAX_DELAY)
+        print(f"{now()}    -- 그룹 딜레이: {delay:.1f}s --")
+        await asyncio.sleep(delay)
+
+    print(f"{now()} ◀ 사이클 완료\n")
 
 async def main():
-    print("텔레그램에 로그인 중...")
-    await client.start(PHONE_NUMBER)
-    print("로그인 완료. 자연스러운 전송 패턴으로 메시지를 전송합니다.")
-    await forward_message_to_all_groups()
+    print(f"{now()} 로그인 중…")
+    await client.start(phone=PHONE)
+    print(f"{now()} 로그인 완료, 루프 진입\n")
+
+    while True:
+        await forward_cycle()
+
+        # 사이클 레벨 딜레이 로그 & 계산
+        hour = datetime.now(JST).hour
+        if 2 <= hour < 7:
+            dmin, dmax = NIGHT_MIN, NIGHT_MAX
+            print(f"{now()} [MODE] (휴식 전) 새벽 모드 유지")
+        else:
+            dmin, dmax = DAY_MIN, DAY_MAX
+            print(f"{now()} [MODE] (휴식 전) 낮 모드 유지")
+
+        cycle_delay = random.uniform(dmin, dmax) * 60
+        print(f"{now()} [휴식] 다음 사이클까지 {cycle_delay/60:.1f}분 대기\n")
+        await asyncio.sleep(cycle_delay)
 
 if __name__ == "__main__":
     asyncio.run(main())
